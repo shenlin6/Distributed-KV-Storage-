@@ -28,6 +28,22 @@ import (
 	"course/labrpc"
 )
 
+const (
+	electionTimeOutMin time.Duration = 250 * time.Millisecond
+	electionTimeOutMax time.Duration = 400 * time.Millisecond
+)
+
+// resetElectionLocked 重置选举时钟（加锁才能用）
+func (rf *Raft) resetElectionLocked() {
+	rf.electionStart = time.Now()
+	randRange := int64(electionTimeOutMax - electionTimeOutMin)
+	rf.electionTimeOut = electionTimeOutMin + time.Duration(rand.Int63()%randRange)
+}
+
+func (rf *Raft) isElectionTimeOutLocked() bool {
+	return time.Since(rf.electionStart) > rf.electionTimeOut
+}
+
 type Role string
 
 const (
@@ -172,17 +188,47 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 // field names must start with capital letters!
 type RequestVoteArgs struct {
 	// Your data here (PartA, PartB).
+	Term        int
+	CandidateId int
 }
 
 // example RequestVote RPC reply structure.
 // field names must start with capital letters!
 type RequestVoteReply struct {
 	// Your data here (PartA).
+	Term         int
+	VotedGranted bool //投票是否通过
 }
 
 // example RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (PartA, PartB).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	reply.Term = rf.currentTerm
+	reply.VotedGranted = false
+	//对齐 term
+	if args.Term < rf.currentTerm {
+
+		LOG(rf.me, rf.currentTerm, DVote, "-> S%d,Reject voted,higher term,T%d>T%d", args.CandidateId, rf.currentTerm, args.Term)
+		return
+	}
+	if args.Term > rf.currentTerm {
+		rf.becomeFollowerLocked(args.Term)
+	}
+	// 检查是否投过票
+	if rf.votedFor != -1 {
+		LOG(rf.me, rf.currentTerm, DVote, "-> S%d,Reject Already voted to S%d", args.Term, rf.votedFor)
+		return
+	}
+
+	//满足所有条件才给票
+	reply.VotedGranted = true
+	rf.votedFor = args.Term
+	// 投票之后重置选举时钟
+	rf.resetElectionLocked()
+	LOG(rf.me, rf.currentTerm, DVote, "-> S%d,Vote granted", args.CandidateId)
 }
 
 // example code to send a RequestVote RPC to a server.
@@ -258,16 +304,84 @@ func (rf *Raft) killed() bool {
 	return z == 1
 }
 
-func (rf *Raft) ticker() {
-	for rf.killed() == false {
+// contextLostLocked 检测是否仍为发送 RPC 之前的角色以及 term (收到 RPC 返回值时不知道过了多少时间)
+// 需要及时终止回调函数、请求返回的处理，否则状态机会产生问题
+func (rf *Raft) contextLostLocked(role Role, term int) bool {
+	return !(rf.currentTerm == term && rf.role == role)
+}
+
+// startElection 发起选举，只对当前term负责
+func (rf *Raft) startElection(term int) {
+	votes := 0
+	askVoteFromPeer := func(peer int, args *RequestVoteArgs) {
+		reply := &RequestVoteReply{} //其他节点的响应
+		ok := rf.sendRequestVote(peer, args, reply)
+
+		//handle response
+		rf.mu.Lock()
+		defer rf.mu.Unlock()
+		if !ok {
+			LOG(rf.me, rf.currentTerm, DDebug, "ask vote from S%d,Lost or error", peer)
+			return
+		}
+		// align term
+		if reply.Term > rf.currentTerm {
+			rf.becomeFollowerLocked(reply.Term)
+			return
+		}
+		//check the context
+		if rf.contextLostLocked(Candidate, term) {
+			LOG(rf.me, rf.currentTerm, DVote, "Lost context,abort RequestVoteReply for S%d", peer)
+			return
+		}
+
+		if reply.VotedGranted {
+			votes++
+			// 票数大于半数则变成Leader
+			if votes > len(rf.peers) {
+				rf.becomeLeader()
+				go rf.replicationTicker(term) //发起心跳
+			}
+		}
+	}
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if rf.contextLostLocked(Candidate, term) {
+		LOG(rf.me, rf.currentTerm, DVote, "Lost Candidate to %s,abort RequestVote", rf.role)
+		return
+	}
+	for peer := 0; peer < len(rf.peers); peer++ {
+		if peer != rf.me {
+			votes++
+			continue
+		}
+		args := &RequestVoteArgs{
+			Term:        rf.currentTerm,
+			CandidateId: rf.me,
+		}
+		// 异步要票，否则阻塞主进程
+		go askVoteFromPeer(peer, args)
+	}
+}
+
+func (rf *Raft) electionticker() {
+	for !rf.killed() {
 
 		// Your code here (PartA)
 		// Check if a leader election should be started.
+		rf.mu.Lock()
+		//不是leader并且选举超时就发起选举
+		if rf.role != Leader && rf.isElectionTimeOutLocked() {
+			rf.becomeCandidate()
+			go rf.startElection(rf.currentTerm)
+		}
+		rf.mu.Unlock()
 
 		// pause for a random amount of time between 50 and 350
 		// milliseconds.
 		ms := 50 + (rand.Int63() % 300)
-		time.Sleep(time.Duration(ms) * time.Millisecond)
+		time.Sleep(time.Duration(ms) * time.Millisecond) //sleep随机时间，最大程度避免peer同时发起选举/
 	}
 }
 
@@ -296,7 +410,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.readPersist(persister.ReadRaftState())
 
 	// start ticker goroutine to start elections
-	go rf.ticker()
+	go rf.electionticker()
 
 	return rf
 }
