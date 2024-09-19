@@ -31,7 +31,7 @@ import (
 const (
 	electionTimeOutMin time.Duration = 250 * time.Millisecond
 	electionTimeOutMax time.Duration = 400 * time.Millisecond
-	replicateInterval  time.Duration = 200 * time.Millisecond
+	replicateInterval  time.Duration = 30 * time.Millisecond
 )
 
 // resetElectionLocked 重置选举时钟（加锁才能用）
@@ -131,11 +131,9 @@ func (rf *Raft) becomeLeader() {
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
-
-	var term int
-	var isleader bool
-	// Your code here (PartA).
-	return term, isleader
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.currentTerm, rf.role == Leader
 }
 
 // save Raft's persistent state to stable storage,
@@ -355,6 +353,7 @@ func (rf *Raft) startReplication(term int) bool {
 		defer rf.mu.Unlock()
 		if !ok {
 			LOG(rf.me, rf.currentTerm, DLog, "->S%d Lost or crashed", peer)
+			return
 		}
 
 		//对齐 term(发现对方 term 更高就变成他的 Follower)
@@ -386,6 +385,7 @@ func (rf *Raft) startReplication(term int) bool {
 		}
 		go replicateToPeer(peer, args)
 	}
+	return true
 }
 
 // replicationTicker 心跳（日志同步）：只能在传入的 term 内才能进行日志同步
@@ -429,7 +429,7 @@ func (rf *Raft) startElection(term int) {
 		if reply.VotedGranted {
 			votes++
 			// 票数大于半数则变成Leader
-			if votes > len(rf.peers) {
+			if votes > len(rf.peers)/2 {
 				rf.becomeLeader()
 				go rf.replicationTicker(term) //发起心跳
 			}
@@ -443,7 +443,7 @@ func (rf *Raft) startElection(term int) {
 		return
 	}
 	for peer := 0; peer < len(rf.peers); peer++ {
-		if peer != rf.me {
+		if peer == rf.me {
 			votes++
 			continue
 		}
