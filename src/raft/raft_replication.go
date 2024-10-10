@@ -86,6 +86,25 @@ func (rf *Raft) startReplication(term int) bool {
 			return
 		}
 
+		// 处理 reply
+
+		// 如果匹配不成功
+		if !reply.Success {
+			// 回退term
+			idx, term := args.PrevLogIndex, args.PrevLogTerm
+			for idx > 0 && rf.log[idx].Term == term {
+				idx--
+			}
+			rf.nextIndex[peer] = idx + 1
+			LOG(rf.me, rf.currentTerm, DLog, "Not match with S%d in %d,try next=%d", peer, args.PrevLogIndex, rf.nextIndex[peer])
+			return
+		}
+
+		// 匹配成功，更新matchIndex
+		rf.matchIndex[peer] = args.PrevLogIndex + len(args.Entries) // 匹配点只对当前的参数负责，因为可能发送 RPC 同时会有新的 log 进来
+		rf.nextIndex[peer] = rf.matchIndex[peer] + 1
+
+		// TODO 更新 commitIndex,进而下发给 follower，指导 follower本地的 reply
 	}
 
 	// rf.currentTerm 可能被并发修改，需要加锁
@@ -100,12 +119,22 @@ func (rf *Raft) startReplication(term int) bool {
 
 	for peer := 0; peer < len(rf.peers); peer++ {
 		if peer == rf.me {
+			// Leader 自己给自己更新 matchIndex
+			rf.matchIndex[peer] = len(rf.log) - 1
+			rf.nextIndex[peer] = len(rf.log)
 			continue
 		}
 
+		prevIdx := rf.nextIndex[peer] - 1
+		prevTerm := rf.log[prevIdx].Term
+
+		//如果视图匹配上了就发送 Leader 的 prevIdx 后面所有的日志
 		args := &AppendEntriesArgs{
-			Term:     rf.currentTerm,
-			LeaderId: rf.me,
+			Term:         rf.currentTerm,
+			LeaderId:     rf.me,
+			PrevLogIndex: prevIdx,
+			PrevLogTerm:  prevTerm,
+			Entries:      rf.log[prevIdx+1:],
 		}
 		go replicateToPeer(peer, args)
 	}

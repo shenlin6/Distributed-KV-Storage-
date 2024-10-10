@@ -81,7 +81,7 @@ type Raft struct {
 
 	// Leader使用的,相当于每个 peer 的视图
 	nextIndex  []int
-	MatchIndex []int
+	matchIndex []int
 
 	electionStart   time.Time
 	electionTimeOut time.Duration // Random
@@ -120,6 +120,13 @@ func (rf *Raft) becomeLeader() {
 	}
 	LOG(rf.me, rf.currentTerm, DLeader, "Become a Leader in T%d", rf.currentTerm)
 	rf.role = Leader
+
+	//初始化 Leader 对于 peers 的视图
+	for peer := 0; peer < len(rf.peers); peer++ {
+		rf.nextIndex[peer] = len(rf.log)
+		rf.matchIndex[peer] = 0
+	}
+
 }
 
 // return currentTerm and whether this server
