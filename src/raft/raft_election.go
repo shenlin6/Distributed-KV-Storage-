@@ -16,6 +16,18 @@ func (rf *Raft) isElectionTimeOutLocked() bool {
 	return time.Since(rf.electionStart) > rf.electionTimeOut
 }
 
+// isMoreUpdate 检查自己的最后一条日志和候选人的最后一条日志谁更新
+func (rf *Raft) isMoreUpdateLocked(candidateIndex, candidateTerm int) bool {
+	l := len(rf.log)
+	lastIndex, lastTerm := l-1, rf.log[l-1].Term
+	LOG(rf.me, rf.currentTerm, DVote, "Compare last log,Me:[%d]T%d,Candidate:[%d]T%d", lastIndex, lastTerm, candidateIndex, candidateTerm)
+	if lastTerm != candidateTerm {
+		return lastTerm > candidateTerm
+	}
+	return lastIndex > candidateIndex
+
+}
+
 // example RequestVote RPC reply structure.
 // field names must start with capital letters!
 type RequestVoteReply struct {
@@ -43,7 +55,13 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 	// 检查是否投过票
 	if rf.votedFor != -1 {
-		LOG(rf.me, rf.currentTerm, DVote, "-> S%d,Reject Already voted to S%d", args.Term, rf.votedFor)
+		LOG(rf.me, rf.currentTerm, DVote, "-> S%d,Reject voted,Already voted to S%d", args.Term, rf.votedFor)
+		return
+	}
+
+	// 检查当前 peer 的日志和候选者的日志哪一个更新
+	if rf.isMoreUpdateLocked(args.LastLogIndex, args.LastLogTerm) {
+		LOG(rf.me, rf.currentTerm, DVote, "-> S%d,Reject voted,Candidate less up-to-date", args.CandidateId)
 		return
 	}
 
@@ -129,7 +147,7 @@ func (rf *Raft) startElection(term int) {
 			votes++
 			// 票数大于半数则变成Leader
 			if votes > len(rf.peers)/2 {
-				rf.becomeLeader()
+				rf.becomeLeaderLocked()
 				go rf.replicationTicker(term) //发起心跳
 			}
 		}
@@ -138,17 +156,22 @@ func (rf *Raft) startElection(term int) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if rf.contextLostLocked(Candidate, term) {
-		LOG(rf.me, rf.currentTerm, DVote, "Lost Candidate to %s,abort RequestVote", rf.role)
+		LOG(rf.me, rf.currentTerm, DVote, "Lost Candidate[T%d] to %s[T%d],abort RequestVote", rf.role, term, rf.currentTerm)
 		return
 	}
+
+	l := len(rf.log)
+
 	for peer := 0; peer < len(rf.peers); peer++ {
 		if peer == rf.me {
 			votes++
 			continue
 		}
 		args := &RequestVoteArgs{
-			Term:        rf.currentTerm,
-			CandidateId: rf.me,
+			Term:         rf.currentTerm,
+			CandidateId:  rf.me,
+			LastLogIndex: l - 1,
+			LastLogTerm:  rf.log[l-1].Term,
 		}
 		// 异步要票，否则阻塞主进程
 		go askVoteFromPeer(peer, args)
@@ -163,7 +186,7 @@ func (rf *Raft) electionticker() {
 		rf.mu.Lock()
 		//不是leader并且选举超时就发起选举
 		if rf.role != Leader && rf.isElectionTimeOutLocked() {
-			rf.becomeCandidate()
+			rf.becomeCandidateLocked()
 			go rf.startElection(rf.currentTerm)
 		}
 		rf.mu.Unlock()

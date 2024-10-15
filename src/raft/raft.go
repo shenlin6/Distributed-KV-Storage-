@@ -99,9 +99,10 @@ func (rf *Raft) becomeFollowerLocked(term int) {
 		rf.votedFor = -1
 	}
 	rf.currentTerm = term
+
 }
 
-func (rf *Raft) becomeCandidate() {
+func (rf *Raft) becomeCandidateLocked() {
 	if rf.role == Leader {
 		LOG(rf.me, rf.currentTerm, DError, "Leader can't become a candidate")
 		return
@@ -111,9 +112,10 @@ func (rf *Raft) becomeCandidate() {
 	rf.currentTerm++
 	rf.role = Candidate
 	rf.votedFor = rf.me
+
 }
 
-func (rf *Raft) becomeLeader() {
+func (rf *Raft) becomeLeaderLocked() {
 	if rf.role != Candidate {
 		LOG(rf.me, rf.currentTerm, DError, "Only Candidate can become a Leader")
 		return
@@ -190,6 +192,9 @@ type RequestVoteArgs struct {
 	// Your data here (PartA, PartB).
 	Term        int
 	CandidateId int
+
+	LastLogIndex int
+	LastLogTerm  int
 }
 
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
@@ -250,7 +255,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.log = append(rf.log, LogEntry{}) //首先加入一个空的日志，可以避免很多边界判断
 
 	// 初始化 Leader 对于 peer 的视图
-	rf.MatchIndex = make([]int, len(rf.peers))
+	rf.matchIndex = make([]int, len(rf.peers))
 	rf.nextIndex = make([]int, len(rf.peers))
 
 	// initialize from state persisted before a crash
