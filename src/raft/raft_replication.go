@@ -1,6 +1,9 @@
 package raft
 
-import "time"
+import (
+	"sort"
+	"time"
+)
 
 type LogEntry struct {
 	Term         int         // the log entry's term
@@ -16,6 +19,9 @@ type AppendEntriesArgs struct {
 	PrevLogIndex int
 	PrevLogTerm  int
 	Entries      []LogEntry
+
+	// 用于更新 follower 的 commitIndex
+	LeaderCommit int
 }
 
 type AppendEntriesReply struct {
@@ -55,7 +61,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.Success = true
 	LOG(rf.me, rf.currentTerm, DLog2, "Follower accept logs:(%d, %d)", args.PrevLogIndex, args.PrevLogIndex+len(args.Entries))
 
-	// TODO: 更新每个 peer 的 LeaderCommit
+	// 更新每个 peer 的 LeaderCommit
+	if args.LeaderCommit > rf.commitIndex {
+		LOG(rf.me, rf.currentTerm, DApply, "Follower update the commit index %d->%d", rf.commitIndex, args.LeaderCommit)
+		rf.commitIndex = args.LeaderCommit
+		// 唤醒 applicationTicker
+		rf.applyCond.Signal()
+	}
 
 	//重置时钟
 	rf.resetElectionLocked()
@@ -65,6 +77,16 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	return ok
+}
+
+// getMajorityIndexLocked 获取 peer 中 matchIndex 的众数
+func (rf *Raft) getMajorityIndexLocked() int {
+	tempIndexes := make([]int, len(rf.peers))
+	copy(tempIndexes, rf.matchIndex)
+	sort.Ints(sort.IntSlice(tempIndexes))
+	majorityIdx := (len(rf.peers) - 1) / 2
+	LOG(rf.me, rf.currentTerm, DDebug, "Match index after sort: %v, majority[%d]=%d", tempIndexes, majorityIdx, tempIndexes[majorityIdx])
+	return tempIndexes[majorityIdx]
 }
 
 // startReplication 对所有 peer 发送 RPC
@@ -104,7 +126,14 @@ func (rf *Raft) startReplication(term int) bool {
 		rf.matchIndex[peer] = args.PrevLogIndex + len(args.Entries) // 匹配点只对当前的参数负责，因为可能发送 RPC 同时会有新的 log 进来
 		rf.nextIndex[peer] = rf.matchIndex[peer] + 1
 
-		// TODO 更新 commitIndex,进而下发给 follower，指导 follower本地的 reply
+		// 更新 commitIndex,进而下发给 follower，指导 follower本地的 reply
+		majorityMatched := rf.getMajorityIndexLocked()
+		if majorityMatched > rf.commitIndex {
+			LOG(rf.me, rf.currentTerm, DApply, "Leader update the commit index %d->%d", rf.commitIndex, majorityMatched)
+			rf.commitIndex = majorityMatched
+			// 唤醒 applicationTicker
+			rf.applyCond.Signal()
+		}
 	}
 
 	// rf.currentTerm 可能被并发修改，需要加锁
@@ -135,6 +164,7 @@ func (rf *Raft) startReplication(term int) bool {
 			PrevLogIndex: prevIdx,
 			PrevLogTerm:  prevTerm,
 			Entries:      rf.log[prevIdx+1:],
+			LeaderCommit: rf.commitIndex,
 		}
 		go replicateToPeer(peer, args)
 	}

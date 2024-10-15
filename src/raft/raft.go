@@ -83,6 +83,12 @@ type Raft struct {
 	nextIndex  []int
 	matchIndex []int
 
+	// 用于 apply 的字段
+	applych     chan ApplyMsg
+	lastApplied int
+	commitIndex int
+	applyCond   *sync.Cond //日志 apply 只在被唤醒时触发
+
 	electionStart   time.Time
 	electionTimeOut time.Duration // Random
 }
@@ -258,11 +264,16 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.matchIndex = make([]int, len(rf.peers))
 	rf.nextIndex = make([]int, len(rf.peers))
 
+	// 初始化用于 apply 的字段
+	rf.applych = applyCh
+	rf.applyCond = sync.NewCond(&rf.mu)
+
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
 	// start ticker goroutine to start elections
-	go rf.electionticker()
+	go rf.electionTicker()
+	go rf.applicationTicker()
 
 	return rf
 }

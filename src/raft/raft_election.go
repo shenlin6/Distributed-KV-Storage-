@@ -178,7 +178,7 @@ func (rf *Raft) startElection(term int) {
 	}
 }
 
-func (rf *Raft) electionticker() {
+func (rf *Raft) electionTicker() {
 	for !rf.killed() {
 
 		// Your code here (PartA)
