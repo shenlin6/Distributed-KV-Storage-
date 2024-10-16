@@ -29,7 +29,7 @@ import (
 const (
 	electionTimeOutMin time.Duration = 250 * time.Millisecond
 	electionTimeOutMax time.Duration = 400 * time.Millisecond
-	replicateInterval  time.Duration = 30 * time.Millisecond
+	replicateInterval  time.Duration = 70 * time.Millisecond
 )
 
 type Role string
@@ -203,14 +203,23 @@ type RequestVoteArgs struct {
 	LastLogTerm  int
 }
 
+// Start 将日志发送给 Leader,
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
-	// Your code here (PartB).
+	//保证系统只有一个对外数据接收点
+	if rf.role != Leader {
+		return 0, 0, false
+	}
+	rf.log = append(rf.log, LogEntry{
+		Term:         rf.currentTerm,
+		CommandValid: true,
+		Command:      command,
+	})
+	LOG(rf.me, rf.currentTerm, DLeader, "Leader accept log [%d]T%d", len(rf.log)-1, rf.currentTerm)
 
-	return index, term, isLeader
+	return len(rf.log) - 1, rf.currentTerm, true
 }
 
 // the tester doesn't halt goroutines created by Raft after each test,

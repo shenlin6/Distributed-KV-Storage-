@@ -47,7 +47,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	// 如果 PrevLog 不匹配就返回错误
-	if args.PrevLogIndex > len(rf.log) { // 可能 peer 隔离太久了
+	if args.PrevLogIndex >= len(rf.log) { // 可能 peer 隔离太久了
 		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d,Reject log,Follower‘s log is too short,len %d<=Prev:%d", args.LeaderId, len(rf.log), args.PrevLogIndex)
 		return
 	}
@@ -89,7 +89,7 @@ func (rf *Raft) getMajorityIndexLocked() int {
 	return tempIndexes[majorityIdx]
 }
 
-// startReplication 对所有 peer 发送 RPC
+// startReplication 对所有 peer 发送 RPC(只对参数中的 term 负责)
 func (rf *Raft) startReplication(term int) bool {
 	replicateToPeer := func(peer int, args *AppendEntriesArgs) {
 		reply := &AppendEntriesReply{}
@@ -108,8 +108,13 @@ func (rf *Raft) startReplication(term int) bool {
 			return
 		}
 
-		// 处理 reply
+		// 判断上下文是否丢失
+		if rf.contextLostLocked(Leader, term) {
+			LOG(rf.me, rf.currentTerm, DLog, "->S:%d Context Lost T%d:Leader->T%d:%d", peer, term, rf.currentTerm, rf.role)
+			return
+		}
 
+		// 处理 reply
 		// 如果匹配不成功
 		if !reply.Success {
 			// 回退term
@@ -118,7 +123,7 @@ func (rf *Raft) startReplication(term int) bool {
 				idx--
 			}
 			rf.nextIndex[peer] = idx + 1
-			LOG(rf.me, rf.currentTerm, DLog, "Not match with S%d in %d,try next=%d", peer, args.PrevLogIndex, rf.nextIndex[peer])
+			LOG(rf.me, rf.currentTerm, DLog, "->S:%d, Not matched with S%d, try next=%d", peer, args.PrevLogIndex, rf.nextIndex[peer])
 			return
 		}
 
