@@ -62,7 +62,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	//日志不过短,Follower 存在 Leader.PrevLog,但不匹配,跳过对应 term的全部日志
 	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm { // 任期不同
 		reply.ConfilictTerm = rf.log[args.PrevLogIndex].Term
-		reply.ConfilictIndex = rf.firstLogFor(reply.ConfilictTerm) //任期不同直接跳过这个任期的所有 index
+		reply.ConfilictIndex = rf.firstLogFor(reply.ConfilictTerm) //任期不同直接跳过这个任期的所有 index,回退到上一个 term
 		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d reject log,Prev log not match,[%d]: T%d != T%d", args.LeaderId, rf.log[args.PrevLogIndex].Term, args.PrevLogTerm)
 		return
 	}
@@ -129,12 +129,21 @@ func (rf *Raft) startReplication(term int) bool {
 		// 处理 reply
 		// 如果匹配不成功
 		if !reply.Success {
-			// 回退term
-			idx, term := args.PrevLogIndex, args.PrevLogTerm
-			for idx > 0 && rf.log[idx].Term == term {
-				idx--
+			prevIndex := rf.nextIndex[peer]
+			if reply.Term == InvalidTerm {
+				rf.nextIndex[peer] = reply.ConfilictIndex
+			} else {
+				firstTermIndex := rf.firstLogFor(reply.ConfilictTerm)
+				if firstTermIndex != InvalidIndex {
+					rf.nextIndex[peer] = firstTermIndex
+				} else {
+					rf.nextIndex[peer] = reply.ConfilictIndex
+				}
 			}
-			rf.nextIndex[peer] = idx + 1
+			// 避免乱序的 reply 影响匹配效率
+			if rf.nextIndex[peer] > prevIndex {
+				rf.nextIndex[peer] = prevIndex
+			}
 			LOG(rf.me, rf.currentTerm, DLog, "->S:%d, Not matched with S%d, try next=%d", peer, args.PrevLogIndex, rf.nextIndex[peer])
 			return
 		}
