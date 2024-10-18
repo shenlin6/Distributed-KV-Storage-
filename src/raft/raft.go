@@ -100,12 +100,16 @@ func (rf *Raft) becomeFollowerLocked(term int) {
 	}
 	LOG(rf.me, rf.currentTerm, DLog, "%s->Follower,For T%d->T%d", rf.role, rf.currentTerm, term)
 	rf.role = Follower
+	shouldPersist := rf.currentTerm != term //看是否需要持久化
 	//投票置空
 	if term > rf.currentTerm {
 		rf.votedFor = -1
 	}
 	rf.currentTerm = term
-
+	//
+	if shouldPersist {
+		rf.persistLocked()
+	}
 }
 
 func (rf *Raft) becomeCandidateLocked() {
@@ -118,7 +122,7 @@ func (rf *Raft) becomeCandidateLocked() {
 	rf.currentTerm++
 	rf.role = Candidate
 	rf.votedFor = rf.me
-
+	rf.persistLocked()
 }
 
 func (rf *Raft) becomeLeaderLocked() {
@@ -134,7 +138,6 @@ func (rf *Raft) becomeLeaderLocked() {
 		rf.nextIndex[peer] = len(rf.log)
 		rf.matchIndex[peer] = 0
 	}
-
 }
 
 // return currentTerm and whether this server
@@ -143,44 +146,6 @@ func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	return rf.currentTerm, rf.role == Leader
-}
-
-// save Raft's persistent state to stable storage,
-// where it can later be retrieved after a crash and restart.
-// see paper's Figure 2 for a description of what should be persistent.
-// before you've implemented snapshots, you should pass nil as the
-// second argument to persister.Save().
-// after you've implemented snapshots, pass the current snapshot
-// (or nil if there's not yet a snapshot).
-func (rf *Raft) persist() {
-	// Your code here (PartC).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// raftstate := w.Bytes()
-	// rf.persister.Save(raftstate, nil)
-}
-
-// restore previously persisted state.
-func (rf *Raft) readPersist(data []byte) {
-	if data == nil || len(data) < 1 { // bootstrap without any state?
-		return
-	}
-	// Your code here (PartC).
-	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
 }
 
 // the service says it has created a snapshot that has
@@ -218,6 +183,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Command:      command,
 	})
 	LOG(rf.me, rf.currentTerm, DLeader, "Leader accept log [%d]T%d", len(rf.log)-1, rf.currentTerm)
+	rf.persistLocked()
 
 	return len(rf.log) - 1, rf.currentTerm, true
 }
@@ -276,8 +242,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// 初始化用于 apply 的字段
 	rf.applych = applyCh
 	rf.applyCond = sync.NewCond(&rf.mu)
+	rf.commitIndex = 0
+	rf.lastApplied = 0
 
-	// initialize from state persisted before a crash
+	// initialize from state persisted before a crash(注意在赋值之后再调用)
 	rf.readPersist(persister.ReadRaftState())
 
 	// start ticker goroutine to start elections

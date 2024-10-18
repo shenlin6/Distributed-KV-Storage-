@@ -68,6 +68,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	//满足所有条件才给票
 	reply.VotedGranted = true
 	rf.votedFor = args.Term
+	rf.persistLocked()
 	// 投票之后重置选举时钟
 	rf.resetElectionLocked()
 	LOG(rf.me, rf.currentTerm, DVote, "-> S%d,Vote granted", args.CandidateId)

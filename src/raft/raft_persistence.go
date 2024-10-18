@@ -17,7 +17,7 @@ func (rf *Raft) persistString() string {
 // second argument to persister.Save().
 // after you've implemented snapshots, pass the current snapshot
 // (or nil if there's not yet a snapshot).
-func (rf *Raft) persist() {
+func (rf *Raft) persistLocked() {
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
 	e.Encode(rf.currentTerm)
@@ -25,6 +25,7 @@ func (rf *Raft) persist() {
 	e.Encode(rf.log)
 	raftstate := w.Bytes()
 	rf.persister.Save(raftstate, nil)
+	LOG(rf.me, rf.currentTerm, DPersist, "Persist:,%v", rf.persistString())
 }
 
 // restore previously persisted state.
@@ -56,6 +57,6 @@ func (rf *Raft) readPersist(data []byte) {
 		return
 	}
 	rf.log = log
-	LOG(rf.me, rf.currentTerm, DPersist, "Read from disk: %v", rf.persistString())
+	LOG(rf.me, rf.currentTerm, DPersist, "Read from persist: %v", rf.persistString())
 
 }
