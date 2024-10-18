@@ -32,6 +32,11 @@ const (
 	replicateInterval  time.Duration = 70 * time.Millisecond
 )
 
+const (
+	InvalidTerm  int = 0
+	InvalidIndex int = 0 //表示没有找到对应 log 的 index
+)
+
 type Role string
 
 const (
@@ -140,6 +145,17 @@ func (rf *Raft) becomeLeaderLocked() {
 	}
 }
 
+func (rf *Raft) firstLogFor(term int) int {
+	for idx, entry := range rf.log {
+		if entry.Term == term {
+			return idx
+		} else if entry.Term > term {
+			break
+		}
+	}
+	return InvalidIndex
+}
+
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
@@ -231,9 +247,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// Your initialization code here (PartA, PartB, PartC).
 	rf.role = Follower
-	rf.currentTerm = 0
+	rf.currentTerm = 1
 	rf.votedFor = -1
-	rf.log = append(rf.log, LogEntry{}) //首先加入一个空的日志，可以避免很多边界判断
+	rf.log = append(rf.log, LogEntry{Term: InvalidTerm}) //首先加入一个空的日志，可以避免很多边界判断
 
 	// 初始化 Leader 对于 peer 的视图
 	rf.matchIndex = make([]int, len(rf.peers))

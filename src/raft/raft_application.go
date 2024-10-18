@@ -27,6 +27,5 @@ func (rf *Raft) applicationTicker() {
 		LOG(rf.me, rf.currentTerm, DApply, "Apply log for [%d, %d]", rf.lastApplied+1, rf.lastApplied+len(entries))
 		rf.lastApplied += len(entries)
 		rf.mu.Unlock()
-
 	}
 }

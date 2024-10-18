@@ -27,6 +27,10 @@ type AppendEntriesArgs struct {
 type AppendEntriesReply struct {
 	Term    int
 	Success bool
+
+	//用于优化 Leader 的日志回溯
+	ConfilictIndex int
+	ConfilictTerm  int
 }
 
 // AppendEntries peer 接受心跳
@@ -48,10 +52,17 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	// 如果 PrevLog 不匹配就返回错误
 	if args.PrevLogIndex >= len(rf.log) { // 可能 peer 隔离太久了
+		//日志过短，直接将 ConfilictIndex 设置为 follower 的最后一条日志,ConfilictTerm 置空
+		reply.ConfilictTerm = InvalidTerm
+		reply.ConfilictIndex = len(rf.log)
+
 		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d,Reject log,Follower‘s log is too short,len %d<=Prev:%d", args.LeaderId, len(rf.log), args.PrevLogIndex)
 		return
 	}
+	//日志不过短,Follower 存在 Leader.PrevLog,但不匹配,跳过对应 term的全部日志
 	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm { // 任期不同
+		reply.ConfilictTerm = rf.log[args.PrevLogIndex].Term
+		reply.ConfilictIndex = rf.firstLogFor(reply.ConfilictTerm) //任期不同直接跳过这个任期的所有 index
 		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d reject log,Prev log not match,[%d]: T%d != T%d", args.LeaderId, rf.log[args.PrevLogIndex].Term, args.PrevLogTerm)
 		return
 	}
