@@ -174,7 +174,7 @@ func (rf *Raft) startReplication(term int) bool {
 
 		// 更新 commitIndex,进而下发给 follower，指导 follower本地的 reply
 		majorityMatched := rf.getMajorityIndexLocked()
-		if majorityMatched > rf.commitIndex {
+		if majorityMatched > rf.commitIndex && rf.log[majorityMatched].Term == rf.currentTerm { //这里不能提交 peer 之前的日志,需要压一到
 			LOG(rf.me, rf.currentTerm, DApply, "Leader update the commit index %d->%d", rf.commitIndex, majorityMatched)
 			rf.commitIndex = majorityMatched
 			// 唤醒 applicationTicker
