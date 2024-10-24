@@ -66,28 +66,28 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.resetElectionLocked()
 		if !reply.Success {
 			LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, Follower Conflict: [%d]T%d", args.LeaderId, reply.ConfilictIndex, reply.ConfilictTerm)
-			LOG(rf.me, rf.currentTerm, DDebug, "<- S%d, Follower log=%v", args.LeaderId, rf.logString())
+			LOG(rf.me, rf.currentTerm, DDebug, "<- S%d, Follower log=%v", args.LeaderId, rf.log.String())
 		}
 	}()
 
 	// 如果 PrevLog 不匹配就返回错误
-	if args.PrevLogIndex >= len(rf.log) { // 可能 peer 隔离太久了
+	if args.PrevLogIndex >= rf.log.size() { // 可能 peer 隔离太久了
 		//日志过短，直接将 ConfilictIndex 设置为 follower 的最后一条日志,ConfilictTerm 置空
 		reply.ConfilictTerm = InvalidTerm
-		reply.ConfilictIndex = len(rf.log)
-		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d,Reject log,Follower‘s log is too short,len %d<=Prev:%d", args.LeaderId, len(rf.log), args.PrevLogIndex)
+		reply.ConfilictIndex = rf.log.size()
+		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d,Reject log,Follower‘s log is too short,len %d<=Prev:%d", args.LeaderId, rf.log.size(), args.PrevLogIndex)
 		return
 	}
 	//日志不过短,Follower 存在 Leader.PrevLog,但不匹配,跳过对应 term的全部日志
-	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm { // 任期不同
-		reply.ConfilictTerm = rf.log[args.PrevLogIndex].Term
-		reply.ConfilictIndex = rf.firstLogFor(reply.ConfilictTerm) //任期不同直接跳过这个任期的所有 index,回退到上一个 term
-		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d reject log,Prev log not match,[%d]: T%d != T%d", args.LeaderId, rf.log[args.PrevLogIndex].Term, args.PrevLogTerm)
+	if rf.log.at(args.PrevLogIndex).Term != args.PrevLogTerm { // 任期不同
+		reply.ConfilictTerm = rf.log.at(args.PrevLogIndex).Term
+		reply.ConfilictIndex = rf.log.firstFor(reply.ConfilictTerm) //任期不同直接跳过这个任期的所有 index,回退到上一个 term
+		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d reject log,Prev log not match,[%d]: T%d != T%d", args.LeaderId, rf.log.at(args.PrevLogIndex).Term, args.PrevLogTerm)
 		return
 	}
 
 	// 将 Leader 的日志目录添加到本地
-	rf.log = append(rf.log[:args.PrevLogIndex+1], args.Entries...)
+	rf.log.appendFrom(args.PrevLogIndex, args.Entries)
 	rf.persistLocked()
 	reply.Success = true
 	LOG(rf.me, rf.currentTerm, DLog2, "Follower accept logs:(%d, %d)", args.PrevLogIndex, args.PrevLogIndex+len(args.Entries))
@@ -151,7 +151,7 @@ func (rf *Raft) startReplication(term int) bool {
 				rf.nextIndex[peer] = reply.ConfilictIndex
 			} else {
 				// 以 Leader 日志为准，跳过 ConfilictTerm 的所有日志
-				firstTermIndex := rf.firstLogFor(reply.ConfilictTerm)
+				firstTermIndex := rf.log.firstFor(reply.ConfilictTerm)
 				if firstTermIndex != InvalidIndex {
 					rf.nextIndex[peer] = firstTermIndex + 1
 				} else { //发现 Leader 日志中不存在 ConfilictTerm 的任何日志，则以 Follower 为准跳过 ConflictTerm,使用 ConfilictIndex。
@@ -163,8 +163,8 @@ func (rf *Raft) startReplication(term int) bool {
 				rf.nextIndex[peer] = prevIndex
 			}
 			LOG(rf.me, rf.currentTerm, DLog, "-> S:%d, Not matched at Prev=[%d]T%d, Try next Prev=[%d]T%d", peer,
-				args.PrevLogIndex, args.PrevLogTerm, rf.nextIndex[peer]-1, rf.log[rf.nextIndex[peer]-1].Term)
-			LOG(rf.me, rf.currentTerm, DDebug, "Leader log=%v", rf.logString())
+				args.PrevLogIndex, args.PrevLogTerm, rf.nextIndex[peer]-1, rf.log.at(rf.nextIndex[peer]-1).Term)
+			LOG(rf.me, rf.currentTerm, DDebug, "Leader log=%v", rf.log.String())
 			return
 		}
 
@@ -174,7 +174,7 @@ func (rf *Raft) startReplication(term int) bool {
 
 		// 更新 commitIndex,进而下发给 follower，指导 follower本地的 reply
 		majorityMatched := rf.getMajorityIndexLocked()
-		if majorityMatched > rf.commitIndex && rf.log[majorityMatched].Term == rf.currentTerm { //这里不能提交 peer 之前的日志,需要压一到
+		if majorityMatched > rf.commitIndex && rf.log.at(majorityMatched).Term == rf.currentTerm { //这里不能提交 peer 之前的日志,需要压一到
 			LOG(rf.me, rf.currentTerm, DApply, "Leader update the commit index %d->%d", rf.commitIndex, majorityMatched)
 			rf.commitIndex = majorityMatched
 			// 唤醒 applicationTicker
@@ -195,13 +195,13 @@ func (rf *Raft) startReplication(term int) bool {
 	for peer := 0; peer < len(rf.peers); peer++ {
 		if peer == rf.me {
 			// Leader 自己给自己更新 matchIndex
-			rf.matchIndex[peer] = len(rf.log) - 1
-			rf.nextIndex[peer] = len(rf.log)
+			rf.matchIndex[peer] = rf.log.size() - 1
+			rf.nextIndex[peer] = rf.log.size()
 			continue
 		}
 
 		prevIdx := rf.nextIndex[peer] - 1
-		prevTerm := rf.log[prevIdx].Term
+		prevTerm := rf.log.at(prevIdx).Term
 
 		//如果视图匹配上了就发送 Leader 的 prevIdx 后面所有的日志
 		args := &AppendEntriesArgs{
@@ -209,7 +209,7 @@ func (rf *Raft) startReplication(term int) bool {
 			LeaderId:     rf.me,
 			PrevLogIndex: prevIdx,
 			PrevLogTerm:  prevTerm,
-			Entries:      rf.log[prevIdx+1:],
+			Entries:      rf.log.tail(prevIdx + 1),
 			LeaderCommit: rf.commitIndex,
 		}
 		LOG(rf.me, rf.currentTerm, DDebug, "-> Append, Args=%v", peer, args.String())
