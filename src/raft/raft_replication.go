@@ -201,6 +201,20 @@ func (rf *Raft) startReplication(term int) bool {
 		}
 
 		prevIdx := rf.nextIndex[peer] - 1
+
+		// 发现日志被截断了
+		if prevIdx < rf.log.snapLastIdx {
+			args := &InstallSnapshotArgs{
+				Term:              rf.currentTerm,
+				LeaderId:          rf.me,
+				LastIncludedIndex: rf.log.snapLastIdx,
+				LastIncludedTerm:  rf.log.snapLastTerm,
+				Snapshot:          rf.log.snapshot,
+			}
+			LOG(rf.me, rf.currentTerm, DDebug, "-> S%d SendSnap, Args=%v", peer, args.String())
+			go rf.installToPeer(peer, term, args)
+		}
+
 		prevTerm := rf.log.at(prevIdx).Term
 
 		//如果视图匹配上了就发送 Leader 的 prevIdx 后面所有的日志
