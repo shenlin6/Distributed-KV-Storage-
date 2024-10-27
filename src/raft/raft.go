@@ -59,11 +59,11 @@ type ApplyMsg struct {
 	Command      interface{}
 	CommandIndex int
 
-	// For PartD:
+	// 快照，日志压缩
 	SnapshotValid bool
 	Snapshot      []byte
-	SnapshotTerm  int
 	SnapshotIndex int
+	SnapshotTerm  int
 }
 
 // A Go object implementing a single Raft peer.
@@ -89,9 +89,10 @@ type Raft struct {
 	matchIndex []int
 
 	// 用于 apply 的字段
-	applych     chan ApplyMsg
 	lastApplied int
 	commitIndex int
+	applych     chan ApplyMsg
+	snapPending bool
 	applyCond   *sync.Cond //日志 apply 只在被唤醒时触发
 
 	electionStart   time.Time
@@ -229,6 +230,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.applyCond = sync.NewCond(&rf.mu)
 	rf.commitIndex = 0
 	rf.lastApplied = 0
+	rf.snapPending = false
 
 	// initialize from state persisted before a crash(注意在赋值之后再调用)
 	rf.readPersist(persister.ReadRaftState())
