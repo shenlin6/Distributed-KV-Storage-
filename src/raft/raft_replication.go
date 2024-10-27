@@ -162,8 +162,14 @@ func (rf *Raft) startReplication(term int) bool {
 			if rf.nextIndex[peer] > prevIndex {
 				rf.nextIndex[peer] = prevIndex
 			}
+
+			nextPrevIndex := rf.nextIndex[peer] - 1
+			nextPrevTerm := InvalidTerm
+			if nextPrevIndex >= rf.log.snapLastIdx {
+				nextPrevTerm = rf.log.at(nextPrevIndex).Term
+			}
 			LOG(rf.me, rf.currentTerm, DLog, "-> S:%d, Not matched at Prev=[%d]T%d, Try next Prev=[%d]T%d", peer,
-				args.PrevLogIndex, args.PrevLogTerm, rf.nextIndex[peer]-1, rf.log.at(rf.nextIndex[peer]-1).Term)
+				args.PrevLogIndex, args.PrevLogTerm, rf.nextIndex[peer]-1, nextPrevTerm)
 			LOG(rf.me, rf.currentTerm, DDebug, "Leader log=%v", rf.log.String())
 			return
 		}
@@ -201,7 +207,6 @@ func (rf *Raft) startReplication(term int) bool {
 		}
 
 		prevIdx := rf.nextIndex[peer] - 1
-
 		// 发现日志被截断了
 		if prevIdx < rf.log.snapLastIdx {
 			args := &InstallSnapshotArgs{
@@ -213,10 +218,10 @@ func (rf *Raft) startReplication(term int) bool {
 			}
 			LOG(rf.me, rf.currentTerm, DDebug, "-> S%d SendSnap, Args=%v", peer, args.String())
 			go rf.installToPeer(peer, term, args)
+			continue
 		}
 
 		prevTerm := rf.log.at(prevIdx).Term
-
 		//如果视图匹配上了就发送 Leader 的 prevIdx 后面所有的日志
 		args := &AppendEntriesArgs{
 			Term:         rf.currentTerm,

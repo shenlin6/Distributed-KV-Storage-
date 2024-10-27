@@ -46,7 +46,7 @@ func (rf *Raft) applicationTicker() {
 		} else {
 			LOG(rf.me, rf.currentTerm, DApply, "Apply snapshot for [0, %d]", rf.log.snapLastIdx)
 			rf.lastApplied = rf.log.snapLastIdx
-			//
+
 			if rf.commitIndex < rf.lastApplied {
 				rf.commitIndex = rf.lastApplied
 			}
