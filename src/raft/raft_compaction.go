@@ -43,6 +43,24 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	defer rf.mu.Unlock()
 	LOG(rf.me, rf.currentTerm, DDebug, "<- S%d,ResvSnapShot, Args=%v", args.LeaderId, args.String())
 
+	reply.Term = rf.currentTerm
+	// 对齐 term
+	if args.Term < rf.currentTerm {
+		LOG(rf.me, rf.currentTerm, DSnap, "<- S%d, Reject Snap,Higher Term: T%d-T%d", args.LeaderId, rf.currentTerm, args.Term)
+		return
+	}
+	if args.Term >= rf.currentTerm {
+		rf.becomeFollowerLocked(args.Term)
+	}
+
+	//看本地是否已经包含这个 snapshot
+	if rf.log.snapLastIdx >= args.LastIncludedIndex {
+		LOG(rf.me, rf.currentTerm, DSnap, "<- S%d, Reject Snap,Already installed: %d>%d", args.LeaderId, rf.log.snapLastIdx, args.LastIncludedIndex)
+		return
+	}
+
+	rf.log.installSnapshot(args.LastIncludedIndex, args.LastIncludedTerm, args.Snapshot)
+	rf.persistLocked()
 }
 
 func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) bool {

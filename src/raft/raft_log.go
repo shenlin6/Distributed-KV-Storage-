@@ -151,3 +151,17 @@ func (rl *RaftLog) doSnapshot(index int, snapshot []byte) {
 	newLog = append(newLog, rl.tailLog[idx+1:]...)
 	rl.tailLog = newLog
 }
+
+// 从 Leader 那里同步快照,覆盖日志
+func (rl *RaftLog) installSnapshot(index, term int, snapshot []byte) {
+	rl.snapLastIdx = index
+	rl.snapLastTerm = term
+	rl.snapshot = snapshot
+
+	//新建函数，使 GC 能够回收
+	newLog := make([]LogEntry, 0, 1)
+	newLog = append(newLog, LogEntry{
+		Term: rl.snapLastTerm,
+	})
+	rl.tailLog = newLog
+}
