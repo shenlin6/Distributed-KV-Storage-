@@ -7,6 +7,7 @@ import (
 	"log"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 const Debug = false
@@ -16,13 +17,6 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 		log.Printf(format, a...)
 	}
 	return
-}
-
-
-type Op struct {
-	// Your definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
 }
 
 type KVServer struct {
@@ -35,18 +29,80 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	lastApplied  int
+	stateMachine *MemoryKVStateMachine
+	notifyChans  map[int]chan *OpReply
 }
 
-
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
+	// 将操作存储在 raft 日志中并同步给follower
+	index, _, isLeader := kv.rf.Start(Op{
+		Key:    args.Key,
+		OpType: OpGet,
+	})
+
+	// 不是 Leader 的话返回让客户端重试
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+
+	// 等待结果
+	kv.mu.Lock()
+	notifyCh := kv.getNotifyChan(index)
+	kv.mu.Unlock()
+	select {
+	case result := <-notifyCh:
+		reply.Value = result.Value
+		reply.Err = result.Err
+
+	case <-time.After(ClientRequestTimeOut):
+		reply.Err = ErrTimeout
+	}
+
+	// 异步回收 channel
+	go func() {
+		kv.mu.Lock()
+		kv.recycleNotifyChannel(index)
+		kv.mu.Unlock()
+	}()
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	// 将操作存储在 raft 日志中并同步给follower
+	index, _, isLeader := kv.rf.Start(Op{
+		Key:    args.Key,
+		Value:  args.Value,
+		OpType: getOperationType(args.Op),
+	})
+
+	// 不是 Leader 的话返回让客户端重试
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+
+	// 等待结果
+	kv.mu.Lock()
+	notifyCh := kv.getNotifyChan(index)
+	kv.mu.Unlock()
+	select {
+	case result := <-notifyCh:
+		reply.Err = result.Err
+	case <-time.After(ClientRequestTimeOut):
+		reply.Err = ErrTimeout
+	}
+
+	// 异步回收 channel
+	go func() {
+		kv.mu.Lock()
+		kv.recycleNotifyChannel(index)
+		kv.mu.Unlock()
+	}()
 }
 
-//
+// Kill
 // the tester calls Kill() when a KVServer instance won't
 // be needed again. for your convenience, we supply
 // code to set rf.dead (without needing a lock),
@@ -55,7 +111,6 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 // code to Kill(). you're not required to do anything
 // about this, but it may be convenient (for example)
 // to suppress debug output from a Kill()ed instance.
-//
 func (kv *KVServer) Kill() {
 	atomic.StoreInt32(&kv.dead, 1)
 	kv.rf.Kill()
@@ -67,7 +122,7 @@ func (kv *KVServer) killed() bool {
 	return z == 1
 }
 
-//
+// StartKVServer
 // servers[] contains the ports of the set of
 // servers that will cooperate via Raft to
 // form the fault-tolerant key/value service.
@@ -80,7 +135,6 @@ func (kv *KVServer) killed() bool {
 // you don't need to snapshot.
 // StartKVServer() must return quickly, so it should start goroutines
 // for any long-running work.
-//
 func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
@@ -96,6 +150,67 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
+	kv.dead = 0
+	kv.lastApplied = 0
+	kv.stateMachine = NewMemoryKVStateMachine()
 
+	go kv.applyTask()
 	return kv
+}
+
+func (kv *KVServer) applyTask() {
+	if !kv.killed() {
+		select {
+		case message := <-kv.applyCh:
+			if message.CommandValid {
+				kv.mu.Lock()
+
+				//如果消息处理过则忽略
+				if message.CommandIndex <= kv.lastApplied {
+					kv.mu.Unlock()
+					// 这里可能有 bug TODO
+				}
+				kv.lastApplied = message.CommandIndex
+				// 取出用户的操作信息
+				op := message.Command.(Op)
+				//应用到状态机中
+				opReply := kv.applyToStateMachine(op)
+				// 将结果返回回去
+				if _, isLeader := kv.rf.GetState(); isLeader {
+					notifyCh := kv.getNotifyChan(message.CommandIndex)
+					notifyCh <- opReply
+				}
+
+				kv.mu.Unlock()
+			}
+		}
+	}
+}
+
+// 应用到状态机中
+func (kv *KVServer) applyToStateMachine(op Op) *OpReply {
+	var value string
+	var err Err
+
+	switch op.OpType {
+	case OpGet:
+		value, err = kv.stateMachine.Get(op.Key)
+	case OpPut:
+		err = kv.stateMachine.Put(op.Key, op.Value)
+	case OpAppend:
+		err = kv.stateMachine.Append(op.Key, op.Value)
+	}
+
+	return &OpReply{Value: value, Err: err}
+}
+
+func (kv *KVServer) getNotifyChan(index int) chan *OpReply {
+	if _, ok := kv.notifyChans[index]; !ok {
+		kv.notifyChans[index] = make(chan *OpReply, 1)
+	}
+	return kv.notifyChans[index]
+}
+
+func (kv *KVServer) recycleNotifyChannel(index int) {
+	delete(kv.notifyChans, index)
 }

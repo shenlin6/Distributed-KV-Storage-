@@ -56,8 +56,6 @@ func (ck *Clerk) Get(key string) string {
 		// 调用成功，返回 Value
 		return reply.Value
 	}
-
-	return ""
 }
 
 // PutAppend

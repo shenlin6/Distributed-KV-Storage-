@@ -44,6 +44,7 @@ const (
 	Leader    Role = "Leader"
 )
 
+// ApplyMsg
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
 // tester) on the same server, via the applyCh passed to Make(). set
@@ -65,6 +66,7 @@ type ApplyMsg struct {
 	SnapshotTerm  int
 }
 
+// Raft
 // A Go object implementing a single Raft peer.
 type Raft struct {
 	mu        sync.Mutex          // Lock to protect shared access to this peer's state
@@ -145,6 +147,7 @@ func (rf *Raft) becomeLeaderLocked() {
 	}
 }
 
+// GetState
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
@@ -173,6 +176,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	return rf.log.size() - 1, rf.currentTerm, true
 }
 
+// Kill
 // the tester doesn't halt goroutines created by Raft after each test,
 // but it does call the Kill() method. your code can use killed() to
 // check whether Kill() has been called. the use of atomic avoids the
@@ -198,6 +202,7 @@ func (rf *Raft) contextLostLocked(role Role, term int) bool {
 	return !(rf.currentTerm == term && rf.role == role)
 }
 
+// Make
 // the service or tester wants to create a Raft server. the ports
 // of all the Raft servers (including this one) are in peers[]. this
 // server's port is peers[me]. all the servers' peers[] arrays
