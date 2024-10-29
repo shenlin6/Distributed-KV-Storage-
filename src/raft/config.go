@@ -9,9 +9,9 @@ package raft
 //
 
 import (
+	"6.824/labgob"
+	"6.824/labrpc"
 	"bytes"
-	"course/labgob"
-	"course/labrpc"
 	"log"
 	"math/rand"
 	"runtime"

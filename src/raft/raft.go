@@ -22,8 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	//	"course/labgob"
-	"course/labrpc"
+	"6.824/labrpc"
 )
 
 const (

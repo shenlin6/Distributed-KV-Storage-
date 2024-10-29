@@ -50,8 +50,8 @@ package labrpc
 //
 
 import (
+	"6.824/labgob"
 	"bytes"
-	"course/labgob"
 	"log"
 	"math/rand"
 	"reflect"

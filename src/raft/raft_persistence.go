@@ -1,8 +1,8 @@
 package raft
 
 import (
+	"6.824/labgob"
 	"bytes"
-	"course/labgob"
 	"fmt"
 )
 
