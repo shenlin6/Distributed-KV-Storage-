@@ -29,9 +29,10 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-	lastApplied  int
-	stateMachine *MemoryKVStateMachine
-	notifyChans  map[int]chan *OpReply
+	lastApplied      int
+	stateMachine     *MemoryKVStateMachine
+	notifyChans      map[int]chan *OpReply
+	deduplicateTable map[int64]LastOperationInfo
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
@@ -70,11 +71,25 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+
+	//判断客户端的请求是否重复
+	kv.mu.Lock()
+	if kv.isDuplicated(args.ClientId, args.SeqId) {
+		// 如果是重复的请求，直接返回结果
+		OpReply := kv.deduplicateTable[args.ClientId].Reply
+		reply.Err = OpReply.Err
+		kv.mu.Unlock()
+		return
+	}
+	kv.mu.Unlock()
+
 	// 将操作存储在 raft 日志中并同步给follower
 	index, _, isLeader := kv.rf.Start(Op{
-		Key:    args.Key,
-		Value:  args.Value,
-		OpType: getOperationType(args.Op),
+		Key:      args.Key,
+		Value:    args.Value,
+		OpType:   getOperationType(args.Op),
+		ClientId: args.ClientId,
+		SeqId:    args.SeqId,
 	})
 
 	// 不是 Leader 的话返回让客户端重试
@@ -100,6 +115,11 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		kv.recycleNotifyChannel(index)
 		kv.mu.Unlock()
 	}()
+}
+
+func (kv *KVServer) isDuplicated(clientId, seqId int64) bool {
+	info, ok := kv.deduplicateTable[clientId]
+	return ok && seqId <= info.SeqId
 }
 
 // Kill
@@ -153,6 +173,8 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.dead = 0
 	kv.lastApplied = 0
 	kv.stateMachine = NewMemoryKVStateMachine()
+	kv.notifyChans = make(map[int]chan *OpReply)
+	kv.deduplicateTable = make(map[int64]LastOperationInfo)
 
 	go kv.applyTask()
 	return kv
@@ -173,8 +195,23 @@ func (kv *KVServer) applyTask() {
 				kv.lastApplied = message.CommandIndex
 				// 取出用户的操作信息
 				op := message.Command.(Op)
-				//应用到状态机中
-				opReply := kv.applyToStateMachine(op)
+
+				//去重（重复的客户端 putappend 请求）
+				var opReply *OpReply
+				if op.OpType != OpGet && kv.isDuplicated(op.ClientId, op.SeqId) {
+					opReply = kv.deduplicateTable[op.ClientId].Reply
+				} else {
+					//应用到状态机中
+					opReply = kv.applyToStateMachine(op)
+					//保存一下已经应用到状态机中的请求
+					if op.OpType != OpGet {
+						kv.deduplicateTable[op.ClientId] = LastOperationInfo{
+							SeqId: op.SeqId,
+							Reply: opReply,
+						}
+					}
+				}
+
 				// 将结果返回回去
 				if _, isLeader := kv.rf.GetState(); isLeader {
 					notifyCh := kv.getNotifyChan(message.CommandIndex)

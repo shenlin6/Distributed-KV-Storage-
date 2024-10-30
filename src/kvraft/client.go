@@ -8,6 +8,10 @@ type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
 	leaderId int // 记录 leaderId，避免重复轮询查找leaderId
+
+	// 确定一条唯一的命令
+	clientId int64
+	seqId    int64
 }
 
 func nrand() int64 {
@@ -23,6 +27,8 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	// You'll have to add code here.
 
 	ck.leaderId = 0
+	ck.clientId = nrand()
+	ck.seqId = 0
 	return ck
 }
 
@@ -70,14 +76,15 @@ func (ck *Clerk) Get(key string) string {
 // arguments. and reply must be passed as a pointer.
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
+
 	args := &PutAppendArgs{
-		Key:   key,
-		Value: value,
-		Op:    op,
+		Key:      key,
+		Value:    value,
+		Op:       op,
+		ClientId: ck.clientId,
+		SeqId:    ck.seqId,
 	}
-
 	var reply PutAppendReply
-
 	for {
 		ok := ck.servers[ck.leaderId].Call("KVServer.PutAppend", &args, &reply)
 		if !ok || reply.Err == ErrWrongLeader || reply.Err == ErrTimeout {
@@ -86,6 +93,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 			continue
 		}
 		//调用成功，返回
+		ck.seqId++
 		return
 	}
 }
