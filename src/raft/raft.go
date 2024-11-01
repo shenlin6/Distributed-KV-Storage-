@@ -28,7 +28,7 @@ import (
 const (
 	electionTimeOutMin time.Duration = 250 * time.Millisecond
 	electionTimeOutMax time.Duration = 400 * time.Millisecond
-	replicateInterval  time.Duration = 70 * time.Millisecond
+	replicateInterval  time.Duration = 30 * time.Millisecond
 )
 
 const (
@@ -154,6 +154,12 @@ func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	return rf.currentTerm, rf.role == Leader
+}
+
+func (rf *Raft) GetRaftStateSize() int {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.persister.RaftStateSize()
 }
 
 // Start 将日志发送给 Leader,

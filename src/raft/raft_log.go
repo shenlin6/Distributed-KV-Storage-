@@ -65,7 +65,6 @@ func (rl *RaftLog) persist(e *labgob.LabEncoder) {
 }
 
 // 快照后的下标转换
-
 func (rl *RaftLog) size() int {
 	return rl.snapLastIdx + len(rl.tailLog)
 }
@@ -123,7 +122,6 @@ func (rl *RaftLog) String() string {
 	prevTerm := rl.snapLastTerm
 	prevStart := rl.snapLastIdx
 	for i := 0; i < len(rl.tailLog); i++ {
-
 		if rl.tailLog[i].Term != prevTerm {
 			terms += fmt.Sprintf(" [%d, %d]T%d;", prevStart, rl.snapLastIdx+i-1, prevTerm)
 			prevTerm = rl.tailLog[i].Term
@@ -137,6 +135,10 @@ func (rl *RaftLog) String() string {
 // doSnapshot 快照，日志压缩
 func (rl *RaftLog) doSnapshot(index int, snapshot []byte) {
 	// tailLog 本地的 index
+	if index <= rl.snapLastIdx {
+		return
+	}
+
 	idx := rl.idx(index)
 
 	rl.snapLastIdx = index

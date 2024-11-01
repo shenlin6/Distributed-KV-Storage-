@@ -2,6 +2,7 @@ package kvraft
 
 import (
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -43,6 +44,15 @@ type GetReply struct {
 }
 
 const ClientRequestTimeOut = 500 * time.Millisecond
+
+const Debug = false
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug {
+		log.Printf(format, a...)
+	}
+	return
+}
 
 type Op struct {
 	// Your definitions here.

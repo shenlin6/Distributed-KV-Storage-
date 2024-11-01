@@ -4,20 +4,11 @@ import (
 	"6.824/labgob"
 	"6.824/labrpc"
 	"6.824/raft"
-	"log"
+	"bytes"
 	"sync"
 	"sync/atomic"
 	"time"
 )
-
-const Debug = false
-
-func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if Debug {
-		log.Printf(format, a...)
-	}
-	return
-}
 
 type KVServer struct {
 	mu      sync.Mutex
@@ -70,8 +61,6 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
-
 	//判断客户端的请求是否重复
 	kv.mu.Lock()
 	if kv.isDuplicated(args.ClientId, args.SeqId) {
@@ -176,21 +165,23 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.notifyChans = make(map[int]chan *OpReply)
 	kv.deduplicateTable = make(map[int64]LastOperationInfo)
 
+	// 从snapshot 中恢复数据
+	kv.restoreFromSnapshot(persister.ReadSnapshot())
+
 	go kv.applyTask()
 	return kv
 }
 
 func (kv *KVServer) applyTask() {
-	if !kv.killed() {
+	for !kv.killed() {
 		select {
 		case message := <-kv.applyCh:
 			if message.CommandValid {
 				kv.mu.Lock()
-
 				//如果消息处理过则忽略
 				if message.CommandIndex <= kv.lastApplied {
 					kv.mu.Unlock()
-					// 这里可能有 bug TODO
+					continue
 				}
 				kv.lastApplied = message.CommandIndex
 				// 取出用户的操作信息
@@ -218,6 +209,16 @@ func (kv *KVServer) applyTask() {
 					notifyCh <- opReply
 				}
 
+				// 判断是否需要 snapshot
+				if kv.maxraftstate != -1 && kv.rf.GetRaftStateSize() >= kv.maxraftstate {
+					kv.makeSnapshot(message.CommandIndex)
+				}
+
+				kv.mu.Unlock()
+			} else if message.SnapshotValid { //是快照的话需要恢复状态
+				kv.mu.Lock()
+				kv.restoreFromSnapshot(message.Snapshot)
+				kv.lastApplied = message.SnapshotIndex
 				kv.mu.Unlock()
 			}
 		}
@@ -250,4 +251,30 @@ func (kv *KVServer) getNotifyChan(index int) chan *OpReply {
 
 func (kv *KVServer) recycleNotifyChannel(index int) {
 	delete(kv.notifyChans, index)
+}
+
+func (kv *KVServer) makeSnapshot(index int) {
+	buf := new(bytes.Buffer)
+	enc := labgob.NewEncoder(buf)
+	_ = enc.Encode(kv.stateMachine)
+	_ = enc.Encode(kv.deduplicateTable)
+	kv.rf.Snapshot(index, buf.Bytes())
+}
+
+// restoreFromSnapshot 从快照中恢复（重启）
+func (kv *KVServer) restoreFromSnapshot(snapshot []byte) {
+	if len(snapshot) == 0 {
+		return
+	}
+
+	buf := bytes.NewBuffer(snapshot)
+	dec := labgob.NewDecoder(buf)
+	var stateMachine MemoryKVStateMachine
+	var dupTable map[int64]LastOperationInfo
+	if dec.Decode(&stateMachine) != nil || dec.Decode(&dupTable) != nil {
+		panic("failed to restore state from snapshot")
+	}
+
+	kv.stateMachine = &stateMachine
+	kv.deduplicateTable = dupTable
 }

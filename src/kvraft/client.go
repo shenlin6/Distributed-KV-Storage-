@@ -46,13 +46,12 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 func (ck *Clerk) Get(key string) string {
 	// You will have to modify this function.
 
-	args := &GetArgs{
+	args := GetArgs{
 		Key: key,
 	}
 
-	var reply GetReply
-
 	for {
+		var reply GetReply
 		ok := ck.servers[ck.leaderId].Call("KVServer.Get", &args, &reply)
 		if !ok || reply.Err == ErrWrongLeader || reply.Err == ErrTimeout {
 			//请求失败，挑选下一个节点
@@ -77,15 +76,16 @@ func (ck *Clerk) Get(key string) string {
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
 
-	args := &PutAppendArgs{
+	args := PutAppendArgs{
 		Key:      key,
 		Value:    value,
 		Op:       op,
 		ClientId: ck.clientId,
 		SeqId:    ck.seqId,
 	}
-	var reply PutAppendReply
+
 	for {
+		var reply PutAppendReply
 		ok := ck.servers[ck.leaderId].Call("KVServer.PutAppend", &args, &reply)
 		if !ok || reply.Err == ErrWrongLeader || reply.Err == ErrTimeout {
 			//请求失败，挑选下一个节点
