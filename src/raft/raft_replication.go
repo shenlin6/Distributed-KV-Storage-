@@ -147,7 +147,7 @@ func (rf *Raft) startReplication(term int) bool {
 		// 如果匹配不成功
 		if !reply.Success {
 			prevIndex := rf.nextIndex[peer]
-			if reply.Term == InvalidTerm { //说明日志太短了
+			if reply.ConfilictTerm == InvalidTerm { //说明日志太短了
 				rf.nextIndex[peer] = reply.ConfilictIndex
 			} else {
 				// 以 Leader 日志为准，跳过 ConfilictTerm 的所有日志
@@ -231,7 +231,7 @@ func (rf *Raft) startReplication(term int) bool {
 			Entries:      rf.log.tail(prevIdx + 1),
 			LeaderCommit: rf.commitIndex,
 		}
-		LOG(rf.me, rf.currentTerm, DDebug, "-> Append, Args=%v", peer, args.String())
+		LOG(rf.me, rf.currentTerm, DDebug, "->S%d, Append, Args=%v", peer, args.String())
 		go replicateToPeer(peer, args)
 	}
 	return true

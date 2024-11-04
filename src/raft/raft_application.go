@@ -12,17 +12,7 @@ func (rf *Raft) applicationTicker() {
 		snapPendingApply := rf.snapPending
 
 		if !snapPendingApply {
-			if rf.lastApplied < rf.log.snapLastIdx {
-				rf.lastApplied = rf.log.snapLastIdx
-			}
-
-			// make sure that the rf.log have all the entries
-			start := rf.lastApplied + 1
-			end := rf.commitIndex
-			if end >= rf.log.size() {
-				end = rf.log.size() - 1
-			}
-			for i := start; i <= end; i++ {
+			for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
 				entries = append(entries, rf.log.at(i))
 			}
 		}
@@ -56,11 +46,13 @@ func (rf *Raft) applicationTicker() {
 		} else {
 			LOG(rf.me, rf.currentTerm, DApply, "Apply snapshot for [0, %d]", rf.log.snapLastIdx)
 			rf.lastApplied = rf.log.snapLastIdx
+			//
 			if rf.commitIndex < rf.lastApplied {
 				rf.commitIndex = rf.lastApplied
 			}
 			rf.snapPending = false
 		}
+
 		rf.mu.Unlock()
 	}
 }

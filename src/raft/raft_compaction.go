@@ -108,5 +108,4 @@ func (rf *Raft) installToPeer(peer, term int, args *InstallSnapshotArgs) {
 		rf.matchIndex[peer] = args.LastIncludedIndex
 		rf.nextIndex[peer] = rf.matchIndex[peer] + 1
 	}
-
 }
