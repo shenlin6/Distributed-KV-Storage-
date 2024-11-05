@@ -1,5 +1,10 @@
 package shardctrler
 
+import (
+	"log"
+	"time"
+)
+
 //
 // Shard controler: assigns shards to replication groups.
 //
@@ -40,8 +45,8 @@ type Err string
 type JoinArgs struct {
 	Servers map[int][]string // new GID -> servers mappings
 	//为了去重,保证线性一致性
-	clientId int64
-	seqId    int64
+	ClientId int64
+	SeqId    int64
 }
 
 type JoinReply struct {
@@ -51,8 +56,8 @@ type JoinReply struct {
 
 type LeaveArgs struct {
 	GIDs     []int
-	clientId int64
-	seqId    int64
+	ClientId int64
+	SeqId    int64
 }
 
 type LeaveReply struct {
@@ -63,8 +68,8 @@ type LeaveReply struct {
 type MoveArgs struct {
 	Shard    int
 	GID      int
-	clientId int64
-	seqId    int64
+	ClientId int64
+	SeqId    int64
 }
 
 type MoveReply struct {
@@ -80,4 +85,54 @@ type QueryReply struct {
 	WrongLeader bool
 	Err         Err
 	Config      Config
+}
+
+const ClientRequestTimeOut = 500 * time.Millisecond
+
+const Debug = false
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+
+	// (JOIN)
+	Servers map[int][]string // new GID -> servers mappings
+	// (LEAVE)
+	GIDs []int
+	// (MOVE)
+	Shard int
+	GID   int
+	// QUERY
+	Num int // desired config number
+
+	OpType   OperationType
+	ClientId int64
+	SeqId    int64
+}
+
+type OpReply struct {
+	ControllerConfig Config
+	Err              Err
+}
+
+type OperationType uint8
+
+const (
+	OpJoin OperationType = iota
+	OpLeave
+	OpMove
+	OpQuery
+)
+
+type LastOperationInfo struct {
+	SeqId int64
+	Reply *OpReply
 }
