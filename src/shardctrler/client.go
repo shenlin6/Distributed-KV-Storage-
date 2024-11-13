@@ -54,7 +54,7 @@ func (ck *Clerk) Query(num int) Config {
 
 // Join 添加新的 group
 func (ck *Clerk) Join(servers map[int][]string) {
-	args := &JoinArgs{clientId: ck.clientId, seqId: ck.seqId}
+	args := &JoinArgs{ClientId: ck.clientId, SeqId: ck.seqId}
 	// Your code here.
 	args.Servers = servers
 
@@ -75,7 +75,7 @@ func (ck *Clerk) Join(servers map[int][]string) {
 
 // Leave 这些 Group 退出了分布式集群
 func (ck *Clerk) Leave(gids []int) {
-	args := &LeaveArgs{clientId: ck.clientId, seqId: ck.seqId}
+	args := &LeaveArgs{ClientId: ck.clientId, SeqId: ck.seqId}
 	// Your code here.
 	args.GIDs = gids
 
@@ -96,7 +96,7 @@ func (ck *Clerk) Leave(gids []int) {
 
 // Move 将 shard 移动到新的 groupId 中
 func (ck *Clerk) Move(shard int, gid int) {
-	args := &MoveArgs{clientId: ck.clientId, seqId: ck.seqId}
+	args := &MoveArgs{ClientId: ck.clientId, SeqId: ck.seqId}
 	// Your code here.
 	args.Shard = shard
 	args.GID = gid

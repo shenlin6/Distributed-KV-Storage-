@@ -76,7 +76,7 @@ func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
 
 func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
 	// Your code here.
-
+	
 	var opReply OpReply
 	sc.command(Op{
 		OpType: OpQuery,
