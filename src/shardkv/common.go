@@ -53,7 +53,10 @@ type GetReply struct {
 	Value string
 }
 
-const ClientRequestTimeOut = 500 * time.Millisecond
+const (
+	ClientRequestTimeOut = 500 * time.Millisecond
+	GetConfigInternal    = 100 * time.Millisecond
+)
 
 const Debug = false
 

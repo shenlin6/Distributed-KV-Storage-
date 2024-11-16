@@ -64,7 +64,7 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 
 	ck.leaderIds = make(map[int]int)
 	ck.clientId = nrand()
-	ck.seqId=0
+	ck.seqId = 0
 
 	return ck
 }
@@ -82,12 +82,12 @@ func (ck *Clerk) Get(key string) string {
 		gid := ck.config.Shards[shard]
 		if servers, ok := ck.config.Groups[gid]; ok {
 			// try each server for the shard.
-			if _,exist:=ck.leaderIds[gid];!exist{
-				ck.leaderIds[gid]=0
+			if _, exist := ck.leaderIds[gid]; !exist {
+				ck.leaderIds[gid] = 0
 			}
-			oldLeaderId:=ck.leaderIds[gid]
-			
-			for  {
+			oldLeaderId := ck.leaderIds[gid]
+
+			for {
 				srv := ck.make_end(servers[ck.leaderIds[gid]])
 				var reply GetReply
 				ok := srv.Call("ShardKV.Get", &args, &reply)
@@ -98,10 +98,10 @@ func (ck *Clerk) Get(key string) string {
 					break
 				}
 				// ... not ok, or ErrWrongLeader
-				if !ok||reply.Err==ErrWrongLeader||reply.Err==ErrTimeout{
-					ck.leaderIds[gid]=(ck.leaderIds[gid]+1)%len(servers)
+				if !ok || reply.Err == ErrWrongLeader || reply.Err == ErrTimeout {
+					ck.leaderIds[gid] = (ck.leaderIds[gid] + 1) % len(servers)
 					// 不要重复轮询
-					if ck.leaderIds[gid]==oldLeaderId{
+					if ck.leaderIds[gid] == oldLeaderId {
 						break
 					}
 					continue
@@ -119,7 +119,7 @@ func (ck *Clerk) Get(key string) string {
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	args := PutAppendArgs{
 		ClientId: ck.clientId,
-		SeqId: ck.seqId,
+		SeqId:    ck.seqId,
 	}
 	args.Key = key
 	args.Value = value
@@ -129,27 +129,27 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		shard := key2shard(key)
 		gid := ck.config.Shards[shard]
 		if servers, ok := ck.config.Groups[gid]; ok {
-			if _,exist:=ck.leaderIds[gid];!exist{
-				ck.leaderIds[gid]=0
+			if _, exist := ck.leaderIds[gid]; !exist {
+				ck.leaderIds[gid] = 0
 			}
-			oldLeaderId:=ck.leaderIds[gid]
-
+			oldLeaderId := ck.leaderIds[gid]
 
 			for {
 				srv := ck.make_end(servers[ck.leaderIds[gid]])
 				var reply PutAppendReply
 				ok := srv.Call("ShardKV.PutAppend", &args, &reply)
 				if ok && reply.Err == OK {
+					ck.seqId++
 					return
 				}
 				if ok && reply.Err == ErrWrongGroup {
 					break
 				}
 				// ... not ok, or ErrWrongLeader
-				if !ok||reply.Err==ErrWrongLeader||reply.Err==ErrTimeout{
-					ck.leaderIds[gid]=(ck.leaderIds[gid]+1)%len(servers)
+				if !ok || reply.Err == ErrWrongLeader || reply.Err == ErrTimeout {
+					ck.leaderIds[gid] = (ck.leaderIds[gid] + 1) % len(servers)
 					// 不要重复轮询
-					if ck.leaderIds[gid]==oldLeaderId{
+					if ck.leaderIds[gid] == oldLeaderId {
 						break
 					}
 					continue
