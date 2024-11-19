@@ -16,12 +16,13 @@ import (
 //
 
 const (
-	OK             = "OK"
-	ErrNoKey       = "ErrNoKey"
-	ErrWrongGroup  = "ErrWrongGroup"
-	ErrWrongLeader = "ErrWrongLeader"
-	ErrTimeout     = "ErrTimeout"
-	ErrWrongConfig = "ErrWrongConfig"
+	OK                = "OK"
+	ErrNoKey          = "ErrNoKey"
+	ErrWrongGroup     = "ErrWrongGroup"
+	ErrWrongLeader    = "ErrWrongLeader"
+	ErrTimeout        = "ErrTimeout"
+	ErrWrongConfig    = "ErrWrongConfig"
+	ErrConfigNotReady = "ErrConfigNotReady"
 )
 
 type Err string
@@ -57,6 +58,7 @@ type GetReply struct {
 const (
 	ClientRequestTimeOut = 500 * time.Millisecond
 	GetConfigInternal    = 100 * time.Millisecond
+	ShardMigration       = 60 * time.Millisecond
 )
 
 const Debug = false
@@ -108,6 +110,17 @@ type LastOperationInfo struct {
 	Reply *OpReply
 }
 
+// 拷贝去重表
+func (l *LastOperationInfo) copyData() LastOperationInfo {
+	return LastOperationInfo{
+		SeqId: l.SeqId,
+		Reply: &OpReply{
+			Err:   l.Reply.Err,
+			Value: l.Reply.Value,
+		},
+	}
+}
+
 // 传入 Raft
 type RaftCommandType uint8
 
@@ -119,4 +132,25 @@ const (
 type RaftCommand struct {
 	CmdType RaftCommandType
 	Data    interface{}
+}
+
+type ShardStatus uint8
+
+const (
+	Normal ShardStatus = iota
+	Movein
+	Moveout
+	GC
+)
+
+type ShardOperationArgs struct {
+	ConfigNum int
+	ShardIds  []int
+}
+
+type ShardOperationReply struct {
+	Err            Err
+	ConfigNum      int
+	ShardData      map[int]map[string]string
+	DuplicateTable map[int64]LastOperationInfo
 }

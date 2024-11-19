@@ -54,16 +54,25 @@ func (kv *ShardKV) applyNewConfig(newConfig shardctrler.Config) *OpReply {
 		for i := 0; i < shardctrler.NShards; i++ {
 			// 某个 shard 当前不属于某个 group ,配置变更后属于，则将 shard 迁移进来
 			if kv.currentConfig.Shards[i] != kv.gid && newConfig.Shards[i] == kv.gid {
-				//TODO
+				gid := kv.currentConfig.Shards[i]
+				if gid != 0 {
+					kv.shards[i].Status = Movein
+				}
 			}
 
 			// 某个 shard 当前属于某个 group ,配置变更后不属于，则将 shard 迁移出去
 			if kv.currentConfig.Shards[i] == kv.gid && newConfig.Shards[i] != kv.gid {
-				//TODO
+				gid := newConfig.Shards[i]
+				if gid != 0 {
+					kv.shards[i].Status = Moveout
+				}
 			}
 		}
+		kv.prevConfig = kv.currentConfig
 		kv.currentConfig = newConfig
-		return &OpReply{Err: OK}
+		return &OpReply{
+			Err: OK,
+		}
 	}
 	return &OpReply{Err: ErrWrongConfig}
 }

@@ -29,6 +29,7 @@ type ShardKV struct {
 	notifyChans      map[int]chan *OpReply
 	deduplicateTable map[int64]LastOperationInfo
 	currentConfig    shardctrler.Config
+	prevConfig       shardctrler.Config
 	mck              *shardctrler.Clerk
 }
 
@@ -218,6 +219,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.notifyChans = make(map[int]chan *OpReply)
 	kv.deduplicateTable = make(map[int64]LastOperationInfo)
 	kv.currentConfig = shardctrler.DefaultConfig()
+	kv.prevConfig = shardctrler.DefaultConfig()
 
 	// 从snapshot 中恢复数据
 	kv.restoreFromSnapshot(persister.ReadSnapshot())

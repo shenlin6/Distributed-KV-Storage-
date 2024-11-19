@@ -1,6 +1,9 @@
 package shardkv
 
-import "time"
+import (
+	"sync"
+	"time"
+)
 
 func (kv *ShardKV) applyTask() {
 	for !kv.killed() {
@@ -68,13 +71,101 @@ func (kv *ShardKV) applyTask() {
 // 从 shardctl中获取当前配置
 func (kv *ShardKV) getConfigTask() {
 	for !kv.killed() {
-		kv.mu.Lock()
-		newConfig := kv.mck.Query(kv.currentConfig.Num + 1)
-		kv.mu.Unlock()
+		if _, isLeader := kv.rf.GetState(); isLeader {
+			kv.mu.Lock()
+			newConfig := kv.mck.Query(kv.currentConfig.Num + 1)
+			kv.mu.Unlock()
 
-		//传入 raft 进行同步
-		kv.ConfigCommand(RaftCommand{CmdType: ConfigChange, Data: newConfig}, &OpReply{})
-		kv.mu.Unlock()
+			//传入 raft 进行同步
+			kv.ConfigCommand(RaftCommand{CmdType: ConfigChange, Data: newConfig}, &OpReply{})
+		}
+
 		time.Sleep(GetConfigInternal)
+	}
+}
+
+func (kv *ShardKV) getShardByStatus(status ShardStatus) map[int][]int {
+	gidToShards := make(map[int][]int)
+	for i, shard := range kv.shards {
+		if shard.Status == status {
+			// 拿到 shard 原来所属的 groupId
+			gid := kv.prevConfig.Shards[i]
+			if gid != 0 {
+				if _, ok := gidToShards[gid]; !ok {
+					gidToShards[gid] = make([]int, 0)
+				}
+				gidToShards[gid] = append(gidToShards[gid], i)
+			}
+		}
+	}
+	return gidToShards
+}
+
+// GetShardsData 获取 shard 的数据
+func (kv *ShardKV) GetShardsData(args *ShardOperationArgs, reply *ShardOperationReply) {
+	// 从 Leader 获取数据
+	if _, isLeader := kv.rf.GetState(); !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	// 获取到的配置不是我们需要的
+	if kv.currentConfig.Num != args.ConfigNum {
+		reply.Err = ErrConfigNotReady
+		return
+	}
+
+	// 拷贝 shard 数据
+	reply.ShardData = make(map[int]map[string]string)
+	for _, shardId := range args.ShardIds {
+		reply.ShardData[shardId] = kv.shards[shardId].copyData()
+	}
+
+	// 拷贝去重表,保证最终一致性
+	reply.DuplicateTable = make(map[int64]LastOperationInfo)
+	for clientId, op := range kv.deduplicateTable {
+		reply.DuplicateTable[clientId] = op.copyData()
+	}
+
+	reply.ConfigNum, reply.Err = args.ConfigNum, OK
+}
+
+func (kv *ShardKV) shardMigrationTask() {
+	for !kv.killed() {
+		if _, isLeader := kv.rf.GetState(); isLeader {
+			//找到需要迁移的 shard
+			kv.mu.Lock()
+			gidToShards := kv.getShardByStatus(Movein)
+			var wg sync.WaitGroup
+			for gid, sharIds := range gidToShards {
+				wg.Add(1)
+				go func(servers []string, configNum int, sharIds []int) {
+					defer wg.Done()
+					// 遍历 group 中的每个节点，从 Leader 当中读取到对应的 shard 数据
+					getShardArgs := ShardOperationArgs{
+						ConfigNum: configNum,
+						ShardIds:  sharIds,
+					}
+					for _, server := range servers {
+						var getSharReply ShardOperationReply
+						clientEnd := kv.make_end(server)
+						ok := clientEnd.Call("ShardKV.GetShardsData", &getShardArgs, &getSharReply)
+
+						// 获取到了 shard 数据，开始 shard 迁移
+						if ok && getSharReply.Err == OK {
+
+						}
+					}
+
+				}(kv.prevConfig.Groups[gid], kv.currentConfig.Num, sharIds)
+			}
+
+			kv.mu.Unlock()
+			wg.Wait()
+
+		}
+		time.Sleep(ShardMigration)
 	}
 }
