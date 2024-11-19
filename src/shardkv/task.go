@@ -155,7 +155,7 @@ func (kv *ShardKV) shardMigrationTask() {
 
 						// 获取到了 shard 数据，开始 shard 迁移
 						if ok && getSharReply.Err == OK {
-
+							kv.ConfigCommand(RaftCommand{ShardMigrate, getSharReply}, &OpReply{})
 						}
 					}
 

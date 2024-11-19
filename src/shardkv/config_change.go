@@ -42,6 +42,10 @@ func (kv *ShardKV) handleConfigChangeMessage(command RaftCommand) *OpReply {
 	case ConfigChange:
 		newConfig := command.Data.(shardctrler.Config)
 		return kv.applyNewConfig(newConfig)
+
+	case ShardMigrate:
+		shardData := command.Data.(ShardOperationReply)
+		return kv.applyShardMigration(&shardData)
 	default:
 		panic("unknow config change type")
 	}
@@ -72,6 +76,35 @@ func (kv *ShardKV) applyNewConfig(newConfig shardctrler.Config) *OpReply {
 		kv.currentConfig = newConfig
 		return &OpReply{
 			Err: OK,
+		}
+	}
+	return &OpReply{Err: ErrWrongConfig}
+}
+
+// 处理 shard 迁移
+func (kv *ShardKV) applyShardMigration(shardDataReply *ShardOperationReply) *OpReply {
+	if shardDataReply.ConfigNum == kv.currentConfig.Num {
+		// 取出所有的 Share 数据
+		for sharId, shardData := range shardDataReply.ShardData {
+			shard := kv.shards[sharId]
+			if shard.Status == Movein {
+				//将数据存储到 Group 对应的 shard 当中
+				for k, v := range shardData {
+					shard.KV[k] = v
+				}
+				// 迁移完成之后就设置为 GC，后面来清理
+				shard.Status = GC
+			} else {
+				break
+			}
+		}
+		// 拷贝去重表，保证线性一致性
+		for clientId, duplicateTable := range shardDataReply.DuplicateTable {
+			table, ok := kv.deduplicateTable[clientId]
+			//如果不存在或者过时了，需要添加或者更新进来
+			if !ok || table.SeqId < duplicateTable.SeqId {
+				kv.deduplicateTable[clientId] = duplicateTable
+			}
 		}
 	}
 	return &OpReply{Err: ErrWrongConfig}

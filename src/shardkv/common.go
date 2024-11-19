@@ -127,6 +127,7 @@ type RaftCommandType uint8
 const (
 	ClientOperation RaftCommandType = iota
 	ConfigChange
+	ShardMigrate
 )
 
 type RaftCommand struct {
