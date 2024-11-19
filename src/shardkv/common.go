@@ -57,8 +57,9 @@ type GetReply struct {
 
 const (
 	ClientRequestTimeOut = 500 * time.Millisecond
-	GetConfigInternal    = 100 * time.Millisecond
+	GetConfigInterval    = 100 * time.Millisecond
 	ShardMigration       = 60 * time.Millisecond
+	ShardGcInterval      = 60 * time.Millisecond
 )
 
 const Debug = false
@@ -128,6 +129,7 @@ const (
 	ClientOperation RaftCommandType = iota
 	ConfigChange
 	ShardMigrate
+	ShardGC
 )
 
 type RaftCommand struct {

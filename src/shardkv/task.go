@@ -80,7 +80,7 @@ func (kv *ShardKV) getConfigTask() {
 			kv.ConfigCommand(RaftCommand{CmdType: ConfigChange, Data: newConfig}, &OpReply{})
 		}
 
-		time.Sleep(GetConfigInternal)
+		time.Sleep(GetConfigInterval)
 	}
 }
 
@@ -139,7 +139,7 @@ func (kv *ShardKV) shardMigrationTask() {
 			kv.mu.Lock()
 			gidToShards := kv.getShardByStatus(Movein)
 			var wg sync.WaitGroup
-			for gid, sharIds := range gidToShards {
+			for gid, shardIds := range gidToShards {
 				wg.Add(1)
 				go func(servers []string, configNum int, sharIds []int) {
 					defer wg.Done()
@@ -159,7 +159,7 @@ func (kv *ShardKV) shardMigrationTask() {
 						}
 					}
 
-				}(kv.prevConfig.Groups[gid], kv.currentConfig.Num, sharIds)
+				}(kv.prevConfig.Groups[gid], kv.currentConfig.Num, shardIds)
 			}
 
 			kv.mu.Unlock()
@@ -167,5 +167,60 @@ func (kv *ShardKV) shardMigrationTask() {
 
 		}
 		time.Sleep(ShardMigration)
+	}
+}
+
+// GetShardsData 分片清理
+func (kv *ShardKV) DeleteShardsData(args *ShardOperationArgs, reply *ShardOperationReply) {
+	// 从 Leader 获取数据
+	if _, isLeader := kv.rf.GetState(); !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	kv.mu.Lock()
+	// 获取到的配置不是我们需要的最新的
+	if kv.currentConfig.Num > args.ConfigNum {
+		reply.Err = OK
+		kv.mu.Unlock()
+		return
+	}
+	kv.mu.Unlock()
+
+	var opReply OpReply
+	kv.ConfigCommand(RaftCommand{CmdType: ShardGC, Data: *args}, &opReply)
+	reply.Err = opReply.Err
+}
+
+func (kv *ShardKV) shardGCTask() {
+	if !kv.killed() {
+		if _, isLeader := kv.rf.GetState(); isLeader {
+			kv.mu.Lock()
+			gidToShards := kv.getShardByStatus(GC)
+			var wg sync.WaitGroup
+			for gid, shardIds := range gidToShards {
+				wg.Add(1)
+				go func(servers []string, configNum int, sharIds []int) {
+					defer wg.Done()
+					shardGCArgs := ShardOperationArgs{
+						ConfigNum: configNum,
+						ShardIds:  sharIds,
+					}
+					for _, server := range servers {
+						var shardGCReply ShardOperationReply
+						clientEnd := kv.make_end(server)
+						ok := clientEnd.Call("ShardKV.DeleteShardsData", &shardGCArgs, &shardGCReply)
+
+						// shard 删除成功
+						if ok && shardGCReply.Err == OK {
+							kv.ConfigCommand(RaftCommand{ShardGC, shardGCArgs}, &OpReply{})
+						}
+					}
+				}(kv.prevConfig.Groups[gid], kv.currentConfig.Num, shardIds)
+			}
+			kv.mu.Unlock()
+			wg.Wait()
+		}
+
+		time.Sleep(ShardGcInterval)
 	}
 }

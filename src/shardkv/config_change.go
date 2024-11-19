@@ -46,6 +46,9 @@ func (kv *ShardKV) handleConfigChangeMessage(command RaftCommand) *OpReply {
 	case ShardMigrate:
 		shardData := command.Data.(ShardOperationReply)
 		return kv.applyShardMigration(&shardData)
+	case ShardGC:
+		shardsInfo := command.Data.(ShardOperationArgs)
+		return kv.applyShardGC(&shardsInfo)
 	default:
 		panic("unknow config change type")
 	}
@@ -108,4 +111,21 @@ func (kv *ShardKV) applyShardMigration(shardDataReply *ShardOperationReply) *OpR
 		}
 	}
 	return &OpReply{Err: ErrWrongConfig}
+}
+
+func (kv *ShardKV) applyShardGC(shardsInfo *ShardOperationArgs) *OpReply {
+	if shardsInfo.ConfigNum == kv.currentConfig.Num {
+		for _, shardId := range shardsInfo.ShardIds {
+			shard := kv.shards[shardId]
+			if shard.Status == GC {
+				shard.Status = Normal
+			} else if shard.Status == Moveout {
+				// 清理只需要重新初始化即可
+				kv.shards[shardId] = NewMemoryKVStateMachine()
+			} else {
+				break
+			}
+		}
+	}
+	return &OpReply{Err: OK}
 }
