@@ -58,8 +58,8 @@ type GetReply struct {
 const (
 	ClientRequestTimeOut = 500 * time.Millisecond
 	GetConfigInterval    = 100 * time.Millisecond
-	ShardMigration       = 60 * time.Millisecond
-	ShardGcInterval      = 60 * time.Millisecond
+	ShardMigration       = 50 * time.Millisecond
+	ShardGcInterval      = 50 * time.Millisecond
 )
 
 const Debug = false

@@ -20,30 +20,13 @@ func (kv *ShardKV) applyTask() {
 
 				var opReply *OpReply
 				raftCommand := message.Command.(RaftCommand)
-
 				// 处理用户端信息
 				if raftCommand.CmdType == ClientOperation {
 					// 取出用户的操作信息
 					op := raftCommand.Data.(Op)
-
-					//去重（重复的客户端 putappend 请求）
-					if op.OpType != OpGet && kv.isDuplicated(op.ClientId, op.SeqId) {
-						opReply = kv.deduplicateTable[op.ClientId].Reply
-					} else {
-						//应用到状态机中
-
-						sharId := key2shard(op.Key)
-						opReply = kv.applyToStateMachine(op, sharId)
-						//保存一下已经应用到状态机中的请求
-						if op.OpType != OpGet {
-							kv.deduplicateTable[op.ClientId] = LastOperationInfo{
-								SeqId: op.SeqId,
-								Reply: opReply,
-							}
-						}
-					}
+					opReply = kv.applyClientOperation(op)
 				} else { //处理 raft 端信息
-					kv.handleConfigChangeMessage(raftCommand)
+					opReply = kv.handleConfigChangeMessage(raftCommand)
 				}
 
 				// 将结果返回回去
@@ -68,18 +51,51 @@ func (kv *ShardKV) applyTask() {
 	}
 }
 
-// 从 shardctl中获取当前配置
+func (kv *ShardKV) applyClientOperation(op Op) *OpReply {
+	if kv.matchGroup(op.Key) {
+		var opReply *OpReply
+		if op.OpType != OpGet && kv.isDuplicated(op.ClientId, op.SeqId) {
+			opReply = kv.deduplicateTable[op.ClientId].Reply
+		} else {
+			//应用到状态机中
+			sharId := key2shard(op.Key)
+			opReply = kv.applyToStateMachine(op, sharId)
+			//保存一下已经应用到状态机中的请求
+			if op.OpType != OpGet {
+				kv.deduplicateTable[op.ClientId] = LastOperationInfo{
+					SeqId: op.SeqId,
+					Reply: opReply,
+				}
+			}
+		}
+		return opReply
+	}
+	return &OpReply{Err: ErrWrongConfig}
+}
+
+// 从 shardctl中获取当前配置（每次只按顺序处理一个变更请求）
 func (kv *ShardKV) getConfigTask() {
 	for !kv.killed() {
 		if _, isLeader := kv.rf.GetState(); isLeader {
+			isneedGet := true
 			kv.mu.Lock()
-			newConfig := kv.mck.Query(kv.currentConfig.Num + 1)
+			// 判断当前状态是否是Normal，如果不是，说明前一个配置变更还在执行
+			for _, shard := range kv.shards {
+				if shard.Status != Normal {
+					isneedGet = false
+					break
+				}
+			}
+			currentNum := kv.currentConfig.Num
 			kv.mu.Unlock()
 
-			//传入 raft 进行同步
-			kv.ConfigCommand(RaftCommand{CmdType: ConfigChange, Data: newConfig}, &OpReply{})
+			if isneedGet {
+				newConfig := kv.mck.Query(kv.currentConfig.Num + 1)
+				if newConfig.Num == currentNum+1 {
+					kv.ConfigCommand(RaftCommand{CmdType: ConfigChange, Data: newConfig}, &OpReply{})
+				}
+			}
 		}
-
 		time.Sleep(GetConfigInterval)
 	}
 }
@@ -200,7 +216,7 @@ func (kv *ShardKV) shardGCTask() {
 			for gid, shardIds := range gidToShards {
 				wg.Add(1)
 				go func(servers []string, configNum int, sharIds []int) {
-					defer wg.Done()
+					wg.Done()
 					shardGCArgs := ShardOperationArgs{
 						ConfigNum: configNum,
 						ShardIds:  sharIds,

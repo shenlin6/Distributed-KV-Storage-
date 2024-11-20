@@ -42,7 +42,6 @@ func (kv *ShardKV) handleConfigChangeMessage(command RaftCommand) *OpReply {
 	case ConfigChange:
 		newConfig := command.Data.(shardctrler.Config)
 		return kv.applyNewConfig(newConfig)
-
 	case ShardMigrate:
 		shardData := command.Data.(ShardOperationReply)
 		return kv.applyShardMigration(&shardData)
